@@ -1,4 +1,3 @@
-import { Prompts } from '@ant-design/x'
 import { DifyApi, IFile, IMessageFileItem, MessageFileBelongsToEnum } from '@dify-chat/api'
 import { IMessageItem4Render } from '@dify-chat/api'
 import { Chatbox } from '@dify-chat/components'
@@ -34,6 +33,18 @@ interface IChatboxWrapperProps {
 	 * 触发配置应用事件
 	 */
 	handleStartConfig?: () => void
+}
+
+// Define a type for the message object
+interface IMessageForRender {
+	error?: string
+	workflows?: unknown[]
+	agentThoughts?: unknown[]
+	retrieverResources?: unknown[]
+	files?: IMessageFileItem[]
+	content: string
+	feedback?: { rating: 'like' | 'dislike' | null }
+	created_at?: string
 }
 
 /**
@@ -255,17 +266,20 @@ export default function ChatboxWrapper(props: IChatboxWrapperProps) {
 
 	const unStoredMessages4Render = useMemo(() => {
 		return messages.map(item => {
+			const msg = item.message as IMessageForRender
 			return {
 				id: item.id,
 				status: item.status,
-				// @ts-expect-error TODO: 类型待优化
-				error: item.message.error || '',
-				workflows: item.message.workflows,
-				agentThoughts: item.message.agentThoughts,
-				retrieverResources: item.message.retrieverResources,
-				files: item.message.files,
-				content: item.message.content,
+				error: msg.error || '',
 				role: item.status === Roles.LOCAL ? Roles.USER : Roles.AI,
+				isHistory: false,
+				feedback: msg.feedback || undefined,
+				created_at: msg.created_at || '',
+				content: msg.content,
+				workflows: msg.workflows || [],
+				files: msg.files || [],
+				agentThoughts: msg.agentThoughts || [],
+				retrieverResources: msg.retrieverResources || [],
 			} as IMessageItem4Render
 		})
 	}, [messages])
@@ -281,6 +295,9 @@ export default function ChatboxWrapper(props: IChatboxWrapperProps) {
 		},
 		[getConversationMessages],
 	)
+
+	// Opening statement logic
+	const openingStatement = currentApp?.parameters?.opening_statement || ''
 
 	// 如果应用配置 / 对话列表加载中，则展示 loading
 	if (conversationListLoading || appLoading) {
@@ -306,6 +323,9 @@ export default function ChatboxWrapper(props: IChatboxWrapperProps) {
 		)
 	}
 
+	// If no conversation/messages, show opening statement as a background if available
+	const hasMessages = messageItems.length > 0
+
 	return (
 		<div className="flex h-screen flex-col overflow-hidden flex-1">
 			<div className="flex-1 overflow-hidden relative">
@@ -314,6 +334,15 @@ export default function ChatboxWrapper(props: IChatboxWrapperProps) {
 						<Spin spinning />
 					</div>
 				) : null}
+
+				{/* Opening statement as background/placeholder */}
+				{!hasMessages && openingStatement && !initLoading && (
+					<div className="absolute w-full h-full left-0 top-0 z-10 flex items-center justify-center pointer-events-none">
+						<div className="max-w-xl text-center text-theme-text text-base whitespace-pre-line opacity-60 select-none">
+							{openingStatement}
+						</div>
+					</div>
+				)}
 
 				{currentConversationId ? (
 					<Chatbox
