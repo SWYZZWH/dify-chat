@@ -3,8 +3,8 @@ import {
 	DifyApi,
 	EventEnum,
 	IAgentMessage,
-	IChunkChatCompletionResponse,
 	IErrorEvent,
+	IMessageFileItem,
 	IWorkflowNode,
 } from '@dify-chat/api'
 import {
@@ -12,15 +12,35 @@ import {
 	AppInputForm,
 	LucideIcon,
 	MarkdownRenderer,
+	MessageFileList,
 	WorkflowLogs,
 } from '@dify-chat/components'
 import { AppModeEnums, useAppContext } from '@dify-chat/core'
 import { copyToClipboard } from '@toolkit-fe/clipboard'
 import { Button, Empty, Form, message, Tabs } from 'antd'
+import React from 'react'
 import { useState } from 'react'
 
 interface IWorkflowLayoutProps {
 	difyApi: DifyApi
+}
+
+type WorkflowParsedData = {
+	event?: string
+	data?: {
+		outputs?: Record<string, string>
+		files?: Partial<IMessageFileItem>[]
+		id?: string
+		node_type?: string
+		title?: string
+		inputs?: unknown
+		process_data?: unknown
+		elapsed_time?: unknown
+		execution_metadata?: unknown
+		text?: string
+	}
+	answer?: string
+	url?: string
 }
 
 /**
@@ -34,6 +54,7 @@ export default function WorkflowLayout(props: IWorkflowLayoutProps) {
 	const [workflowStatus, setWorkflowStatus] = useState<'running' | 'finished'>()
 	const [workflowItems, setWorkflowItems] = useState<IWorkflowNode[]>([])
 	const [resultDetail, setResultDetail] = useState<Record<string, string>>({})
+	const [files, setFiles] = useState<Partial<IMessageFileItem>[]>([])
 
 	const handleTriggerWorkflow = async (values: Record<string, unknown>) => {
 		const runner = () => {
@@ -66,50 +87,19 @@ export default function WorkflowLayout(props: IWorkflowLayoutProps) {
 					}
 					if (!chunk) continue
 					if (chunk.data) {
-						let parsedData = {} as {
-							id: string
-							task_id: string
-							position: number
-							tool: string
-							tool_input: string
-							observation: string
-							message_files: string[]
-
-							event: IChunkChatCompletionResponse['event'] | 'text_chunk'
-							answer: string
-							conversation_id: string
-							message_id: string
-
-							// 类型
-							type: 'image'
-							// 图片链接
-							url: string
-
-							data: {
-								// 工作流节点的数据
-								id: string
-								node_type: IWorkflowNode['type']
-								title: string
-								inputs: string
-								outputs: Record<string, string>
-								process_data: string
-								elapsed_time: number
-								execution_metadata: IWorkflowNode['execution_metadata']
-								text?: string
-							}
-						}
+						let parsedData: WorkflowParsedData = {}
 						try {
 							parsedData = JSON.parse(chunk.data)
 						} catch (error) {
 							console.error('解析 JSON 失败', error)
 						}
 
-						const innerData = parsedData.data
-
-						if (parsedData.event === 'text_chunk') {
-							setText(prev => {
-								return prev + parsedData.data.text
-							})
+						if (
+							parsedData.event === 'text_chunk' &&
+							parsedData.data &&
+							typeof (parsedData.data as { text?: string }).text === 'string'
+						) {
+							setText(prev => prev + (parsedData.data as { text: string }).text)
 						}
 
 						if (parsedData.event === EventEnum.WORKFLOW_STARTED) {
@@ -119,45 +109,83 @@ export default function WorkflowLayout(props: IWorkflowLayoutProps) {
 							setWorkflowItems([])
 						} else if (parsedData.event === EventEnum.WORKFLOW_FINISHED) {
 							workflows.status = 'finished'
-							const { outputs } = parsedData.data || {}
-							const outputsLength = Object.keys(outputs)?.length
-							if (outputsLength > 0) {
+							const outputs = parsedData.data?.outputs
+							const resultFiles = parsedData.data?.files
+							const outputsLength = outputs ? Object.keys(outputs)?.length : 0
+							if (outputsLength > 0 && outputs) {
 								setResultDetail(outputs)
 							}
-							// 如果返回的对象只有一个属性, 则在 "结果" Tab 中渲染其值
-							if (outputsLength === 1) {
+							if (resultFiles && Array.isArray(resultFiles) && resultFiles.length > 0) {
+								setFiles(resultFiles)
+							}
+							if (outputsLength === 1 && outputs) {
 								setText(Object.values(outputs)[0] as string)
 							}
 							setWorkflowStatus('finished')
-						} else if (parsedData.event === EventEnum.WORKFLOW_NODE_STARTED) {
-							setWorkflowItems(prev => {
-								return [
-									...prev,
-									{
-										id: innerData.id,
-										status: 'running',
-										type: innerData.node_type,
-										title: innerData.title,
-									} as IWorkflowNode,
-								]
-							})
-						} else if (parsedData.event === EventEnum.WORKFLOW_NODE_FINISHED) {
-							setWorkflowItems(prev => {
-								return prev.map(item => {
-									if (item.id === innerData.id) {
+						} else if (
+							parsedData.event === EventEnum.WORKFLOW_NODE_STARTED &&
+							parsedData.data &&
+							typeof (parsedData.data as { id?: string; node_type?: string; title?: string }).id ===
+								'string' &&
+							typeof (parsedData.data as { node_type?: string }).node_type === 'string' &&
+							typeof (parsedData.data as { title?: string }).title === 'string'
+						) {
+							const nodeData = parsedData.data as { id: string; node_type: string; title: string }
+							setWorkflowItems(prev => [
+								...prev,
+								{
+									id: nodeData.id,
+									status: 'running',
+									type: nodeData.node_type,
+									title: nodeData.title,
+								} as IWorkflowNode,
+							])
+						} else if (
+							parsedData.event === EventEnum.WORKFLOW_NODE_FINISHED &&
+							parsedData.data &&
+							typeof (parsedData.data as { id?: string }).id === 'string'
+						) {
+							const nodeData = parsedData.data as {
+								id: string
+								inputs?: unknown
+								outputs?: unknown
+								process_data?: unknown
+								elapsed_time?: unknown
+								execution_metadata?: unknown
+							}
+							setWorkflowItems(prev =>
+								prev.map(item => {
+									if (item.id === nodeData.id) {
 										return {
 											...item,
 											status: 'success',
-											inputs: innerData.inputs,
-											outputs: innerData.outputs,
-											process_data: innerData.process_data,
-											elapsed_time: innerData.elapsed_time,
-											execution_metadata: innerData.execution_metadata,
+											inputs:
+												typeof nodeData.inputs === 'string'
+													? nodeData.inputs
+													: JSON.stringify(nodeData.inputs ?? ''),
+											outputs: nodeData.outputs,
+											process_data:
+												typeof nodeData.process_data === 'string'
+													? nodeData.process_data
+													: JSON.stringify(nodeData.process_data ?? ''),
+											elapsed_time:
+												typeof nodeData.elapsed_time === 'number'
+													? nodeData.elapsed_time
+													: Number(nodeData.elapsed_time ?? 0),
+											execution_metadata:
+												typeof nodeData.execution_metadata === 'object' &&
+												nodeData.execution_metadata !== null
+													? (nodeData.execution_metadata as {
+															total_tokens: number
+															total_price: number
+															currency: string
+														})
+													: { total_tokens: 0, total_price: 0, currency: '' },
 										}
 									}
 									return item
-								})
-							})
+								}),
+							)
 						}
 						if (parsedData.event === EventEnum.MESSAGE_FILE) {
 							result += `<img src=""${parsedData.url} />`
@@ -187,7 +215,7 @@ export default function WorkflowLayout(props: IWorkflowLayoutProps) {
 	const resultItems = [
 		{
 			key: 'result',
-			label: '结果',
+			label: '结果' as React.ReactNode,
 			children: (
 				<div className="w-full h-full overflow-x-hidden overflow-y-auto">
 					<MarkdownRenderer markdownText={text} />
@@ -195,9 +223,21 @@ export default function WorkflowLayout(props: IWorkflowLayoutProps) {
 			),
 			visible: resultDetailLength === 1,
 		},
+		files.length > 0
+			? {
+					key: 'files',
+					label: '文件' as React.ReactNode,
+					children: (
+						<div className="w-full h-full overflow-x-hidden overflow-y-auto">
+							<MessageFileList files={files as Partial<IMessageFileItem>[]} />
+						</div>
+					),
+					visible: true,
+				}
+			: undefined,
 		{
 			key: 'detail',
-			label: '详情',
+			label: '详情' as React.ReactNode,
 			children: (
 				<div className="w-full">
 					<LucideIcon
@@ -215,7 +255,16 @@ export default function WorkflowLayout(props: IWorkflowLayoutProps) {
 			),
 			visible: resultDetailLength > 0,
 		},
-	].filter(item => item.visible)
+	].filter(
+		(
+			item,
+		): item is {
+			key: string
+			label: React.ReactNode
+			children: React.ReactElement
+			visible: boolean
+		} => !!item && item.visible && !!item.children,
+	)
 
 	return (
 		<div className="block md:flex md:items-stretch w-full h-full overflow-y-auto md:overflow-y-hidden bg-gray-50">
@@ -266,7 +315,7 @@ export default function WorkflowLayout(props: IWorkflowLayoutProps) {
 							status={workflowStatus}
 							items={workflowItems}
 						/>
-						{resultItems?.length ? <Tabs items={resultItems} /> : null}
+						{resultItems.length ? <Tabs items={resultItems} /> : null}
 					</>
 				)}
 			</div>

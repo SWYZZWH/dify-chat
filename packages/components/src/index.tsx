@@ -10,4 +10,5 @@ export { AppInfo } from "./chatbox/app-info";
 export { default as AppInputForm } from "./chatbox/app-input-form";
 export { default as LucideIcon } from "./lucide-icon";
 export { default as WorkflowLogs } from "./chatbox/message/workflow-logs";
+export { default as MessageFileList } from "./chatbox/message/file-list";
 export * from "./layout";
